@@ -1,31 +1,23 @@
 {
   "name": "votty-peer",
-  "version": "0.1.0",
-  "description": "Peernode manager for hyperledger-based voting system",
+  "version": "0.2.6",
+  "description": "Peer node for hyperledger-based voting system, Votty",
   "main": "vpeer.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Votty/peer.git"
-  },
+  "repository": "https://github.com/Votty/peer.git",
+  "private": false,
   "keywords": [
     "blockchain",
     "vote",
     "hyperledger",
     "voting"
   ],
-  "author": "Votty",
-  "license": "SEE LICENSE IN <LICENSE.md>",
-  "bugs": {
-    "url": "https://github.com/Votty/peer/issues"
-  },
-  "homepage": "https://github.com/Votty/peer#readme",
+  "author": "Votty <support@votty.net>",
+  "license": "MPL-2.0",
+  "homepage": "https://www.votty.net/",
   "dependencies": {
     "colors": "^1.3.2",
     "express": "^4.16.4",
-    "js-yaml": "^3.12.0",
+    "fabric-shim": "^1.3.1",
     "moment": "^2.22.2"
   }
 }

@@ -1,4 +1,5 @@
-// (c) Yuoa of Votty
+// Author: Yuoa@Votty
+// Generates cryptographically-safe random number
 // Base by https://stackoverflow.com/a/33627342/9471289
 
 const crypto = require("crypto");

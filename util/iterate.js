@@ -1,4 +1,4 @@
-// (c) Yuoa of Votty
+// Author: Yuoa@Votty
 // Iterating Promises
 
 module.exports = (obj, fn, limit) => {

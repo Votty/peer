@@ -1,4 +1,4 @@
-// (c) Yuoa of Votty
+// Author: Yuoa@Votty
 // Do mkdir recursively
 
 const path = require("path");

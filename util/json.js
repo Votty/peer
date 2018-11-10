@@ -1,10 +1,25 @@
-// (c) Yuoa of Votty
-// Update specified json with given data
+// Author: Yuoa@Votty
+// JSON management module
 
-const parse = require("./parse.js");
-const save = require("./save.js");
+const util = require("util");
+const fs = require("fs");
 
-module.exports = (path, obj) => {
+const parse = function (json) {
+    return util
+        .promisify(fs.readFile)(json)
+        .then(raw => {
+            return JSON.parse(raw);
+        });
+};
+
+const save = function (path, obj) {
+    return util.promisify(fs.writeFile)(
+        path,
+        JSON.stringify(obj)
+    );
+};
+
+const merge = (path, obj) => {
     return parse(path).then(
         ext => {
             // Merge
@@ -24,4 +39,8 @@ module.exports = (path, obj) => {
             else return save(path, obj);
         }
     );
+};
+
+module.exports = {
+    parse: parse, save: save, merge: merge
 };
