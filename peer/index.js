@@ -1,5 +1,5 @@
 // Author: Yuoa@Votty
 
-module.exports = () => {
+module.exports = (arg, log, e) => {
     console.log("success!");
 };
