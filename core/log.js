@@ -18,64 +18,74 @@ module.exports = class {
         this.logFile = logFile;
         this.logDir = logDir;
 
-        // Initialize log files
-        if (this.logDir) {
-            const copiedThis = this;
-            const logPath = path.join(logDir, logFile);
-            const openFStream = (renamedPath) => {
-                let stream = fs.createWriteStream(logPath);
-                this._fstream = stream;
-                if (renamedPath) this.info(`Previous log file has moved to ${renamedPath}.`);
-            };
+        this.prepared = false;
 
-            fs.access(logDir, fs.constants.F_OK, e => {
-                if (e) {
-                    // No log directory -> make & try to write file
-                    try { mkdir(logDir).then(openFStream) } catch (e) {
-                        copiedThis.error("Error occurred while creating log directory.");
+        // Initialize log files
+        if (this.logDir) fsInit();
+    }
+
+    fsInit(logDir = false, logFile = appName + ".log") {
+        if (logDir) {
+            this.logDir = logDir;
+            this.logFile = logFile;
+        }
+
+        const copiedThis = this;
+        const logPath = path.join(this.logDir, this.logFile);
+        const openFStream = (renamedPath) => {
+            let stream = fs.createWriteStream(logPath);
+            this._fstream = stream;
+            if (renamedPath) this.info(`Previous log file has moved to ${renamedPath}.`);
+            this.prepared = true;
+        };
+
+        return fs.access(logDir, fs.constants.F_OK, e => {
+            if (e) {
+                // No log directory -> make & try to write file
+                try { mkdir(this.logDir).then(openFStream) } catch (e) {
+                    copiedThis.error("Error occurred while creating log directory.");
+                    throw e;
+                }
+            } else {
+                // Log directory exists -> check if log file exists
+                try {
+                    fs.accessSync(logPath);
+
+                    // Log file exists -> move log file
+                    let renameLog = function (i) {
+                        // Set destination path
+                        let renamedPath = logPath + "." + i;
+                        fs.access(renamedPath, fs.constants.F_OK, e => {
+                            if (e) {
+                                if (e.code == "ENOENT") {
+                                    // File does not exists
+                                    fs.rename(logPath, renamedPath, e => {
+                                        if (e) {
+                                            copiedThis.error("Error occured while moving previous log file.");
+                                            throw e;
+                                        } else { openFStream(renamedPath); }
+                                    });
+                                } else {
+                                    // File access error
+                                    copiedThis.error("Cannot access to previous log file.");
+                                    throw e;
+                                }
+                            } else renameLog(++i);
+                        });
+                    };
+                    renameLog(0);
+                } catch (e) {
+                    if (e.code == "ENOENT") {
+                        // Log file not exists -> make & load log module
+                        openFStream();
+                    } else {
+                        // log file cannot be accessed
+                        copiedThis.error("Cannot access to log file.");
                         throw e;
                     }
-                } else {
-                    // Log directory exists -> check if log file exists
-                    try {
-                        fs.accessSync(logPath);
-
-                        // Log file exists -> move log file
-                        let renameLog = function (i) {
-                            // Set destination path
-                            let renamedPath = logPath + "." + i;
-                            fs.access(renamedPath, fs.constants.F_OK, e => {
-                                if (e) {
-                                    if (e.code == "ENOENT") {
-                                        // File does not exists
-                                        fs.rename(logPath, renamedPath, e => {
-                                            if (e) {
-                                                copiedThis.error("Error occured while moving previous log file.");
-                                                throw e;
-                                            } else { openFStream(renamedPath); }
-                                        });
-                                    } else {
-                                        // File access error
-                                        copiedThis.error("Cannot access to previous log file.");
-                                        throw e;
-                                    }
-                                } else renameLog(++i);
-                            });
-                        };
-                        renameLog(0);
-                    } catch (e) {
-                        if (e.code == "ENOENT") {
-                            // Log file not exists -> make & load log module
-                            openFStream();
-                        } else {
-                            // log file cannot be accessed
-                            copiedThis.error("Cannot access to log file.");
-                            throw e;
-                        }
-                    }
                 }
-            });
-        }
+            }
+        });
     }
 
     set _colors(c) { this.colors = c }

@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 // Author: Yuoa@Votty
 
-const init = require("./core/init.js");
-const peer = require("./peer");
+const core = require("./core");
+const cc = require("./chaincode");
+const api = require("./api");
 
-init.then((core) => {
+core.then((core) => {
     switch (core.arg.fn.keyword) {
 
         case "run":
-            return peer(core.arg, core.log, core.e);
+            return api(core.arg, core.log, core.e);
+
+        case "install":
+            return cc.install(core.arg, core.log, core.e);
+
+        case "chaincode":
+            return cc.live();
 
     }
 });

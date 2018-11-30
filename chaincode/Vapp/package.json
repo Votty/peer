@@ -1,0 +1,13 @@
+{
+    "name": "votty-chaincode",
+    "version": "0.3.162",
+    "description": "Hyperledger Voting Platform, Votty's Chaincode",
+    "scripts": {
+        "start": "node index.js __VOTTY_CHAINCODE__"
+    },
+    "engine-strict": true,
+    "license": "MPL-2.0",
+    "dependencies": {
+        "fabric-shim": "~1.3.0"
+    }
+}

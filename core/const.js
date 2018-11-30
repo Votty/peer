@@ -8,16 +8,35 @@ module.exports = {
     APPNAME: "Votty Peer",
     APPNAME_ABBR: "vpeer",
 
-    DIR_LOG: path.join(os.homedir(), ".vpeer", "log"),
-    FILE_LOG: "peer.log",
+    LOG_DIR: path.join(os.homedir(), ".vpeer", "log"),
+    LOG_DEFAULT_FILE: "peer.log",
 
     APP_DEFFUNC: "run",
     APP_FUNC: {
         run: {
             keyword: "run",
-            description: "Launch Votty peer",
-            option: []
+            abbr: "r",
+            alias: ["api"],
+            description: "Launch Votty peer API server",
+            option: ["port"],
+            log: "api.log"
+        },
+        install: {
+            keyword: "install",
+            abbr: "i",
+            description: "Instantiate votty to the chain"
+        },
+        chaincode: {
+            keyword: "chaincode",
+            abbr: "cc",
+            description: "Returns hyperledger chaincode. (Only for development purpose.)"
         }
     },
-    APP_OPT: {}
+    APP_OPT: {
+        port: {
+            flags: ["--port", "-p"],
+            type: "ARGOPT_WITH_DATA",
+            description: "Start the web server to given port (Default: 7049)."
+        }
+    }
 };
