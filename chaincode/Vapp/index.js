@@ -1,4 +1,4 @@
-// Author: Votty
+// Author: Yuoa@Votty
 /*
  TODO List
  - On ESnext, change "common functions" private.
@@ -9,7 +9,9 @@
 const shim = require("fabric-shim");
 const util = require("util");
 const random = require("./random.js");
-const moment = require("./moment.js");
+const moment = require("./lib/moment.js");
+const hdkey = require("./lib/hdkey.js");
+const base64 = require("./lib/base64.js").Base64;
 
 const Vapp = module.exports = class Votty {
 
@@ -17,6 +19,7 @@ const Vapp = module.exports = class Votty {
 
     async Init(stub) {
         console.info("Thanks for using Votty platform! Successfully instantiated.");
+        this.tempVerifyCode = {};
         return shim.success();
     }
 
@@ -54,9 +57,10 @@ const Vapp = module.exports = class Votty {
             return new Error("Parameter is not a Buffer.");
     }
 
-    isVoteEnded(vi) {
+    isVoteEnded(vi, ptcpInfo) {
         if (typeof vi.endTime !== "undefined") {
-            return vi.endTime < Number(moment().format('x'));
+            return (vi.endTime < Number(moment().format('x')))
+                || (vi.permitDirectResult && vi.ptcpCount == ptcpInfo.voted);
         } else
             return true;
     }
@@ -73,34 +77,56 @@ const Vapp = module.exports = class Votty {
         }
     }
 
-    checkArgs(args, ...labels) {
+    parseArgs(args, ...labels) {
         // Check args
         this.assert(args && args instanceof Array);
 
         // Check the number of args
         this.assert(args.length == labels.length, `Argument length does not match (received: ${args.length}, expected: ${labels.length})`);
 
-        // Check that is all string type
+        // Check that is all string type and parse it
+        let parsed = {};
         for (let i in labels) {
-            this.assert(typeof args[i] === "string", `${labels[i]} must be passed as string type`);
+            this.assert(typeof args[i] === "string", `\`${labels[i][0]}\` must be passed as string type`);
+            
+            try {
+                let eachParsed = JSON.parse(args[i]);
+                if (labels[i][2] == Array) this.assert(eachParsed instanceof Array);
+                else eachParsed = labels[i][2](eachParsed);
+
+                if (typeof labels[i][3] === "function" && !labels[i][3](eachParsed)) {
+                    if (typeof labels[i][4] === "string")
+                        throw new Error(labels[i][4]);
+                    else
+                        throw new Error("Argument condition checking failed");
+                } else {
+                    parsed[labels[i][1]] = eachParsed;
+                }
+            } catch (e) {
+                this.reportError(`\`${labels[i][0]}\` is not properly-encoded string`);
+                throw e;
+            }
         }
+
+        // Return parsed data
+        return parsed;
     }
 
-    genRandHex(len) {
+    genRandHash(len, base) {
         var gen = "";
         while(gen.length < len)
-            gen += random(0, Number.MAX_SAFE_INTEGER / 64).toString(16);
+            gen += random(0, Number.MAX_SAFE_INTEGER / 64).toString(base || 36);
         return gen.substring(0, len);
     }
 
     /* Votty Querying Functions */
 
-    async getVotingInformation(stub, args) {
-        this.checkArgs(args, "Voting seed");
-        
-        // Check the conditions of the seed
-        this.assert(args[0].length == 30, `The length of voting code is not matched`);
-        let viBytes = await stub.getState(args[0]);
+    async getVotingStatus(stub, args) {
+        let pa = this.parseArgs(args, 
+            ["Voting Seed", "seed", String, _ => _.length == 256]
+            );
+
+        let viBytes = await stub.getState(pa.seed);
 
         // If information exists, get result data from it
         if (viBytes == null)
@@ -113,10 +139,10 @@ const Vapp = module.exports = class Votty {
             else {
                 // From now, vi is successfully parsed voting information object
                 // Then, below two must be correctly saved and must be correctly parsed
-                let candInfo = JSON.parse(await stub.getState(`${args[0]}.candidates`));
-                let ptcpInfo = JSON.parse(await stub.getState(`${args[0]}.participants`));
+                let candInfo = JSON.parse(await stub.getState(`${pa.seed}.candidates`));
+                let ptcpInfo = JSON.parse(await stub.getState(`${pa.seed}.participants`));
 
-                let isVoteEnded = this.isVoteEnded(vi);
+                let isVoteEnded = this.isVoteEnded(vi, ptcpInfo);
 
                 // Append voting rate
                 if (vi.permitLiveRate || isVoteEnded) {
@@ -142,15 +168,15 @@ const Vapp = module.exports = class Votty {
 
     /* Votty Invoking Functions */
 
-    async doVote(stub, args) {
-        this.checkArgs(args, ["Voting seed", "Participation code", "Selected candidate ID"]);
+    async doVoting(stub, args) {
+        let pa = this.parseArgs(args,
+            ["Key Path", "path", String, _ => _.length == 1024],
+            ["Public Key", "key", String, _ => _ !== "null"],
+            ["Voting ID", "seed", String, _ => _.length == 256],
+            ["Candidate ID", "cand", String, _ => _.length == 16]
+            );
 
-        // Check the conditions of args
-        this.assert(args[0].length == 30, `The length of voting code is not matched`);
-        this.assert(args[1].length == 1997, `The length of participant code is not matched`);
-        this.assert(args[2].length == 15, `The length of candidate ID is not matched`);
-
-        let viBytes = await stub.getState(args[0]);
+        let viBytes = await stub.getState(pa.seed);
 
         // If information exists, continue to vote
         if (viBytes == null)
@@ -163,27 +189,31 @@ const Vapp = module.exports = class Votty {
             else {
                 // From now, vi is successfully parsed voting information object
                 // Then, below two must be correctly saved and must be correctly parsed
-                let candInfo = JSON.parse(await stub.getState(`${args[0]}.candidates`));
-                let ptcpInfo = JSON.parse(await stub.getState(`${args[0]}.participants`));
+                let candInfo = JSON.parse(await stub.getState(`${pa.seed}.candidates`));
+                let ptcpInfo = JSON.parse(await stub.getState(`${pa.seed}.participants`));
+                let genHex = JSON.parse(await stub.getState(`${pa.seed}.seed`));
 
                 // Check if vote is now ongoing
-                this.assert(this.isVoteEnded(vi), `This voting is already ended`);
+                this.assert(this.isVoteEnded(vi, ptcpInfo), `This voting is already ended`);
 
                 // Check if the participant voted
-                this.assert(typeof ptcpInfo[args[1]] !== "boolean", `The participant does not exists`);
-                this.assert(ptcpInfo[args[1]] !== false, `The participant already voted`);
+                const key = hdkey.fromMasterSeed(new Buffer(genHex, 'hex'));
+                const hash = base64.encode(pa.key);
+                this.assert(pa.key === key.derive(`m/${pa.path.match(/.{1,8}/g).join("/")}`).publicKey.toString("hex"), `Public key cannot be derived from given key path`);
+                this.assert(typeof ptcpInfo[hash] === "boolean", `The participant does not exists`);
+                this.assert(ptcpInfo[hash] === false, `The participant already voted`);
 
                 // Check if that candidate exists
-                this.assert(typeof candInfo[args[2]] !== "number", `The candidate does not exists`);
+                this.assert(typeof candInfo[pa.cand] === "number", `The candidate does not exists`);
                 
                 // Process the voting
-                candInfo[args[2]] += 1;
-                ptcpInfo[args[1]] = true;
+                candInfo[pa.cand] += 1;
+                ptcpInfo[hash] = true;
                 ptcpInfo.voted += 1;
 
                 // Publish the voting
-                await stub.putState(`${args[0]}.participants`, Buffer.from(JSON.stringify(ptcpInfo)));
-                await stub.putState(`${args[0]}.candidates`, Buffer.from(JSON.stringify(candInfo)));
+                await stub.putState(`${pa.seed}.participants`, Buffer.from(JSON.stringify(ptcpInfo)));
+                await stub.putState(`${pa.seed}.candidates`, Buffer.from(JSON.stringify(candInfo)));
 
                 // Return the status
                 return true;
@@ -191,89 +221,184 @@ const Vapp = module.exports = class Votty {
         }
     }
 
+    async sendVerificationEmail(stub, args) {
+        let pa = this.parseArgs(args,
+            ["Email Address", "mail", String, _ => _ !== "null"],
+            ["Voting Seed", "seed", String, _ => _ !== "null"]
+            );
+
+        // Verify is existing voting
+        let viBytes = await stub.getState(pa.seed);
+
+        // If information exists, continue to vote
+        if (viBytes == null)
+            return this.reportError(`No voting information exists with given voting seed`);
+        else {
+            let vi = this.parseBuffer(viBytes);
+
+            if (vi instanceof Error)
+                return this.reportError("Error occured while fetching information", vi);
+            else {
+                // From now, vi is successfully parsed voting information object
+                // Then, below two must be correctly saved and must be correctly parsed
+                let mails = JSON.parse(await stub.getState(`${pa.seed}.mails`));
+                let ptcpInfo = JSON.parse(await stub.getState(`${pa.seed}.participants`));
+
+                // Check if vote is now ongoing
+                this.assert(this.isVoteEnded(vi, ptcpInfo), `This voting is already ended`);
+
+                // Check if the participant key already issued
+                this.assert(typeof mails[pa.mail] === "boolean", `The participant does not exists`);
+                this.assert(mails[pa.mail] === false, `The participant already issued a key`);
+
+                const session = this.genRandHash(256);
+                this.tempVerifyCode[session] = {
+                    email: pa.mail,
+                    seed: pa.seed,
+                    code: this.genRandHash(6)
+                };
+            
+                setTimeout(() => {
+                    delete this.tempVerifyCode[session];
+                }, 1800000);
+            
+                // TODO: Send email here and remove verification code from response
+            
+                return {
+                    session: session,
+                    answer: this.tempVerifyCode[session].code
+                };
+            }
+        }
+    }
+
+    async issueKey(stub, args) {
+        let pa = this.parseArgs(args,
+            ["Email Address", "mail", String, _ => _ !== "null"],
+            ["Voting Seed", "seed", String, _ => _.length == 256],
+            ["Verification Code", "code", String, _ => _ !== "null"],
+            ["Verification Session Key", "session", String, _ => _ !== "null"]
+            );
+        
+        // Verify is existing voting
+        let viBytes = await stub.getState(pa.seed);
+
+        // If information exists, continue to vote
+        if (viBytes == null)
+            return this.reportError(`No voting information exists with given voting seed`);
+        else {
+            let vi = this.parseBuffer(viBytes);
+
+            if (vi instanceof Error)
+                return this.reportError("Error occured while fetching information", vi);
+            else {
+                // From now, vi is successfully parsed voting information object
+                // Then, below two must be correctly saved and must be correctly parsed
+                let mails = JSON.parse(await stub.getState(`${pa.seed}.mails`));
+                let ptcpInfo = JSON.parse(await stub.getState(`${pa.seed}.participants`));
+                let genHex = JSON.parse(await stub.getState(`${pa.seed}.seed`));
+
+                // Check if vote is now ongoing
+                this.assert(this.isVoteEnded(vi, ptcpInfo), `This voting is already ended`);
+
+                // Check if the participant key already issued
+                this.assert(typeof mails[pa.mail] === "boolean", `The participant does not exists`);
+                this.assert(mails[pa.mail] === false, `The participant already issued a key`);
+
+                this.assert(typeof this.tempVerifyCode[pa.session] === "object", `Invalid session key`);
+                this.assert(this.tempVerifyCode[pa.session].seed === pa.seed, `Voting ID and session key does not match`);
+                this.assert(this.tempVerifyCode[pa.session].mail === pa.email, `Email address and session key does not match`);
+                this.assert(this.tempVerifyCode[pa.session].code === pa.code, `Verification code does not match`);
+
+                const key = hdkey.fromMasterSeed(new Buffer(genHex, 'hex'));
+                const path = this.genRandHash(1024, 10);
+                const dKey = key.derive(`m/${path.match(/.{1,8}/g).join("/")}`);
+                const hash = base64.encode(dKey.publicKey.toString("hex"));
+                
+                // Process the voting
+                mails[pa.mail] = true;
+                ptcpInfo[hash] = false;
+
+                // Publish the voting
+                await stub.putState(`${pa.seed}.participants`, Buffer.from(JSON.stringify(ptcpInfo)));
+                await stub.putState(`${pa.seed}.mails`, Buffer.from(JSON.stringify(mails)));
+
+                // Return the status
+                return {
+                    path: path,
+                    key: dKey.publicKey.toString("hex")
+                };
+            }
+        }
+    }
+
     async createVoting(stub, args) {
-        this.checkArgs(args, "Title", "Description", "Start time", "End time", "Candidates information", "Participants count", "\"Permit live rate\" item");
+        let pa = this.parseArgs(args,
+            ["Title", "title", String, _ => _ !== "null"],
+            ["Description", "desc", String, _ => _ !== "null"],
+            ["Beginning Time", "startTime", Number, _ => !isNaN(_)],
+            ["Deadline", "endTime", Number, _ => !isNaN(_)],
+            ["List of Candidates", "cands", Array, _ => _.length > 1],
+            ["Email List of Participants", "ptcpMails", Array]
+            );
         
         // Check the number type
-        var startTime = Number(args[2]), endTime = Number(args[3]), nowTime = Number(moment().format('x')), ptcpCount = Number(args[5]);
-        this.assert(!isNaN(startTime), `\`startTime\` should be a string of a number`);
-        this.assert(!isNaN(endTime), `\`endTime\` should be a string of a number`);
-        this.assert(!isNaN(ptcpCount), `\`ptcpCount\` should be a string of a number`);
-        this.assert(startTime > nowTime, `Start time cannot be past`);
-        this.assert(endTime > startTime, `End time must be later than start time`);
-        this.assert(ptcpCount > 0, `Participants count must be at least 1`);
-
-        // Check the boolean type
-        this.assert(args[6] === "true" || args[6] === "false", `"Permit live rate" item must be a string of a boolean`);
-        var permitLiveRate = args[6] === "true" ? true : false;
+        var nowTime = Number(moment().format('x'));
+        this.assert(pa.startTime > nowTime, `Start time cannot be past`);
+        this.assert(pa.endTime > pa.startTime, `End time must be later than start time`);
 
         // Check candidates list and create objects
-        try {
-            var rawCandList = JSON.parse(args[4]);
-        } catch (e) {
-            return this.reportError(`The list of candidates is wrongly formed.`, e);
-        }
-        this.assert(rawCandList instanceof Array, `Parsed candidates list is not an array type`);
-        this.assert(rawCandList.length > 1, `There must be at least two candidates existing`);
-
-        var candList = [], secretCandInfo = { docType: "Candidates" };
-        for (var i in rawCandList) {
-            this.assert(rawCandList[i] instanceof Array, `${i + 1}th candidate information is not a type of array`);
-            this.assert(rawCandList[i].length === 3, `${i + 1}th candidate information is wrongly formed`);
-            let candId = this.genRandHex(15);
+        var candList = [], candVotingBox = { docType: "Candidates" };
+        for (var i in pa.cands) {
+            this.assert(pa.cands[i] instanceof Array, `${i + 1}th candidate information is not a type of array`);
+            this.assert(pa.cands[i].length === 3, `${i + 1}th candidate information is wrongly formed`);
+            let candId = this.genRandHash(16);
             candList.push({
-                name: rawCandList[i][0],
-                short: rawCandList[i][1],
-                media: rawCandList[i][2],
+                name: pa.cands[i][0],
+                short: pa.cands[i][1],
+                media: pa.cands[i][2],
                 id: candId
             });
-            secretCandInfo[candId] = 0;
-        }
-
-        // Create participants object
-        var ptcpInfo = [], secretPtcpInfo = { voted: 0, docType: "Participants" };
-        for (let i = 0; i < ptcpCount; i++) {
-            let ptcpId = "voted";
-            do {
-                ptcpId = this.genRandHex(1997);
-            } while (typeof secretPtcpInfo[ptcpId] !== "undefined");
-            secretPtcpInfo[ptcpId] = false;
-            ptcpInfo.push(ptcpId);
+            candVotingBox[candId] = 0;
         }
 
         // Generate vote seed
         var nvSeed = 0;
         do {
-            nvSeed = this.genRandHex(30);
+            nvSeed = this.genRandHash(256);
         } while (null == (await stub.getState(nvSeed)));
 
+        // Create participants object
+        var ptcpMailVerified = { docType: "Mails" };
+        for (let ptcp of pa.ptcpMails) {
+            ptcpMailVerified[ptcp] = false;
+        }
+
         // Put candidates information in chain
-        await stub.putState(`${nvSeed}.candidates`, Buffer.from(JSON.stringify(secretCandInfo)));
+        await stub.putState(`${nvSeed}.candidates`, Buffer.from(JSON.stringify(candVotingBox)));
 
         // Put participants information in chain
-        await stub.putState(`${nvSeed}.participants`, Buffer.from(JSON.stringify(secretPtcpInfo)));
+        await stub.putState(`${nvSeed}.mails`, Buffer.from(JSON.stringify(ptcpMailVerified)));
+        await stub.putState(`${nvSeed}.seed`, Buffer.from(JSON.stringify(this.genRandHash(128, 16))));
+        await stub.putState(`${nvSeed}.participants`, Buffer.from(JSON.stringify({ voted: 0, docType: "Participants" })));
 
         // Put voint information in chain
         var nvProps = {
             registered: nowTime,
-            title: args[0],
-            description: args[1],
-            start: startTime,
-            end: endTime,
+            title: pa.title,
+            description: pa.desc,
+            start: pa.startTime,
+            end: pa.endTime,
             candidates: candList,
-            ptcpCount: ptcpCount,
-            permitLiveRate: permitLiveRate,
+            ptcpCount: pa.ptcpMails.length,
             docType: "Voting"
         };
         console.log(nvProps);
         await stub.putState(nvSeed, Buffer.from(JSON.stringify(nvProps)));
 
         // Completed
-        console.info(`New voting ${nvSeed} created with ${candList.length} candidates and ${ptcpCount} participants.`);
-        return {
-            seed: nvSeed,
-            participants: ptcpInfo
-        };
+        console.info(`New voting ${nvSeed} created with ${candList.length} candidates and ${pa.ptcpMails.length} participants.`);
+        return nvSeed;
     }
 
 };
